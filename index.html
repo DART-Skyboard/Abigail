@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Arc Lake &lt;model-viewer&gt; Integration</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      background: transparent !important;
+      overflow: hidden;
+    }
+    model-viewer {
+      width: 100%;
+      height: 100%;
+      background: transparent;
+      display: block;
+    }
+    #toolbar {
+      position: absolute;
+      top: 10px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 10;
+      display: flex;
+      gap: 8px;
+    }
+    #toolbar button {
+      padding: 6px 12px;
+      background: deepskyblue;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      font-weight: bold;
+      cursor: pointer;
+    }
+    #toolbar button:disabled {
+      opacity: 0.5;
+      cursor: default;
+    }
+  </style>
+  <script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>
+</head>
+<body>
+  <div id="toolbar">
+    <button id="exportPNG">Export PNG</button>
+    <button id="exportGLB">Export GLB</button>
+    <button id="startAR">Start AR: See Button Bottom Right</button>
+    <button id="exitAR" style="display:none;">Exit AR</button>
+  </div>
+
+  <model-viewer
+    id="viewer"
+    src="https://static.wixstatic.com/3d/fe9774_fc3f3ade14da43808dd70550d0b21ce1.glb"
+    alt="Arc Lake 3D Model"
+    camera-controls
+    exposure="1"
+    environment-image="neutral"
+    shadow-intensity="1"
+    ar
+    ar-modes="webxr scene-viewer quick-look"
+    interaction-prompt="auto">
+  </model-viewer>
+
+  <script>
+    const viewer   = document.getElementById('viewer');
+    const btnPNG   = document.getElementById('exportPNG');
+    const btnGLB   = document.getElementById('exportGLB');
+    const btnStart = document.getElementById('startAR');
+    const btnExit  = document.getElementById('exitAR');
+
+    btnPNG.addEventListener('click', () => {
+      const canvas = viewer.shadowRoot.querySelector('canvas');
+      if (!canvas) return alert('Model not rendered yet');
+      const dataURL = canvas.toDataURL('image/png');
+      const win = window.open();
+      win.document.write(`
+        <html><body style="margin:0;background:#fff;text-align:center">
+          <img src="${dataURL}" style="max-width:100%;height:auto">
+          <p>Right-click (or long-press) to save.</p>
+        </body></html>
+      `);
+    });
+
+    btnGLB.addEventListener('click', () => {
+      const url = viewer.getAttribute('src');
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'ArcLake.glb';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    });
+
+    function startAR() {
+      if (viewer.activateAR) {
+        viewer.activateAR();
+      } else if (viewer.enterAR) {
+        viewer.enterAR();
+      }
+    }
+
+    function stopAR() {
+      if (viewer.exitAR) {
+        viewer.exitAR();
+      } else if (viewer.dismissAR) {
+        viewer.dismissAR();
+      }
+    }
+
+    btnStart.addEventListener('click', startAR);
+    btnExit.addEventListener('click', stopAR);
+
+    viewer.addEventListener('ar-status', (e) => {
+      if (e.detail.status === 'session-started') {
+        btnStart.style.display = 'none';
+        btnExit.style.display = 'inline-block';
+      } else if (e.detail.status === 'not-presenting') {
+        btnStart.style.display = 'inline-block';
+        btnExit.style.display = 'none';
+      }
+    });
+
+    viewer.addEventListener('load', () => {
+      console.log('✅ Model loaded.');
+    });
+  </script>
+</body>
+</html>
