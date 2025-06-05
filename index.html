@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Arc Lake &lt;model-viewer&gt; Integration</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      background: transparent !important;
+      overflow: hidden;
+    }
+    model-viewer {
+      width: 100%;
+      height: 100%;
+      background: transparent;
+      display: block;
+    }
+    #toolbar {
+      position: absolute;
+      top: 10px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 10;
+      display: flex;
+      gap: 8px;
+    }
+    #toolbar button {
+      padding: 6px 12px;
+      background: deepskyblue;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      font-weight: bold;
+      cursor: pointer;
+    }
+    #toolbar button:disabled {
+      opacity: 0.5;
+      cursor: default;
+    }
+
+    .infoBox {
+      position: absolute;
+      background: rgba(255, 255, 255, 0.9);
+      padding: 8px;
+      border-radius: 4px;
+      pointer-events: all;
+      max-width: 220px;
+      transform: translate(-50%, -110%);
+    }
+    .infoBox button {
+      margin-top: 8px;
+      width: 100%;
+      padding: 4px 8px;
+      font-weight: bold;
+      background: deepskyblue;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+
+    .hotspot-btn {
+      pointer-events: all;
+      padding: 4px 6px;
+      background: deepskyblue;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      font-size: 12px;
+      cursor: pointer;
+    }
+  </style>
+  <script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>
+  <script src="https://unpkg.com/three@0.140.0/build/three.min.js"></script>
+  <script src="https://unpkg.com/three@0.140.0/examples/js/loaders/GLTFLoader.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/axios/0.21.1/axios.min.js"></script>
+</head>
+<body>
+  <div id="toolbar">
+    <button id="exportPNG">Export PNG</button>
+    <button id="exportGLB">Export GLB</button>
+    <button id="dismissAll">Dismiss All</button>
+    <button id="startAR">Start AR: See Button Bottom Right</button>
+    <button id="exitAR" style="display:none;">Exit AR</button>
+  </div>
+
+  <model-viewer
+    id="viewer"
+    src="https://static.wixstatic.com/3d/fe9774_fc3f3ade14da43808dd70550d0b21ce1.glb"
+    alt="Arc Lake 3D Model"
+    camera-controls
+    exposure="1"
+    environment-image="neutral"
+    shadow-intensity="1"
+    ar
+    ar-modes="webxr scene-viewer quick-look"
+    interaction-prompt="auto">
+    <div id="infoContainer"></div>
+  </model-viewer>
+
+  <script>
+    const viewer   = document.getElementById('viewer');
+    const btnPNG   = document.getElementById('exportPNG');
+    const btnGLB   = document.getElementById('exportGLB');
+    const btnStart = document.getElementById('startAR');
+    const btnExit  = document.getElementById('exitAR');
+
+    btnPNG.addEventListener('click', () => {
+      const canvas = viewer.shadowRoot.querySelector('canvas');
+      if (!canvas) return alert('Model not rendered yet');
+      const dataURL = canvas.toDataURL('image/png');
+      const win = window.open();
+      win.document.write(`
+        <html><body style="margin:0;background:#fff;text-align:center">
+          <img src="${dataURL}" style="max-width:100%;height:auto">
+          <p>Right-click (or long-press) to save.</p>
+        </body></html>
+      `);
+    });
+
+    btnGLB.addEventListener('click', () => {
+      const url = viewer.getAttribute('src');
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'ArcLake.glb';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    });
+
+    function startAR() {
+      if (viewer.activateAR) {
+        viewer.activateAR();
+      } else if (viewer.enterAR) {
+        viewer.enterAR();
+      }
+    }
+
+    function stopAR() {
+      if (viewer.exitAR) {
+        viewer.exitAR();
+      } else if (viewer.dismissAR) {
+        viewer.dismissAR();
+      }
+    }
+
+    btnStart.addEventListener('click', startAR);
+    btnExit.addEventListener('click', stopAR);
+
+    viewer.addEventListener('ar-status', (e) => {
+      if (e.detail.status === 'session-started') {
+        btnStart.style.display = 'none';
+        btnExit.style.display = 'inline-block';
+      } else if (e.detail.status === 'not-presenting') {
+        btnStart.style.display = 'inline-block';
+        btnExit.style.display = 'none';
+      }
+    });
+
+    const btnDismiss = document.getElementById('dismissAll');
+    const infoContainer = document.getElementById('infoContainer');
+    const infoBoxes = {};
+    let elementData = {};
+
+    async function fetchData() {
+      try {
+        const res = await axios.get('https://script.google.com/macros/s/AKfycbzM1LHcAy92sihh_B2ROfcKwRV1cv4FmIjI51mbtMoJXzU8vWn0xKhZ7sQu3wth1EdYiw/exec');
+        elementData = res.data;
+      } catch (err) {
+        console.error('Error fetching data', err);
+      }
+    }
+
+    function showInfo(name, anchor) {
+      const data = elementData[name];
+      if (!data) return;
+
+      let box = infoBoxes[name];
+      if (!box) {
+        box = document.createElement('div');
+        box.className = 'infoBox';
+        infoBoxes[name] = box;
+        infoContainer.appendChild(box);
+      }
+
+      box.innerHTML = `<h3>${name}</h3>
+        <p>Neutrons: ${data.Neutrons}<br>
+           Protons: ${data.Protons}<br>
+           Electrons: ${data.Electrons}</p>
+        <button>Close</button>`;
+      box.querySelector('button').onclick = () => box.style.display = 'none';
+
+      // position relative to the hotspot element
+      const rect = anchor.getBoundingClientRect();
+      const viewerRect = viewer.getBoundingClientRect();
+      box.style.left = rect.left + rect.width / 2 - viewerRect.left + 'px';
+      box.style.top = rect.top - viewerRect.top + 'px';
+      box.style.transform = 'translate(-50%, -110%)';
+      box.style.display = 'block';
+    }
+
+    function dismissAll() {
+      infoContainer.innerHTML = '';
+      for (const key in infoBoxes) delete infoBoxes[key];
+    }
+
+    btnDismiss.addEventListener('click', dismissAll);
+
+    viewer.addEventListener('click', (e) => {
+      if (e.target.classList.contains('hotspot-btn')) return;
+      dismissAll();
+    });
+
+    viewer.addEventListener('load', async () => {
+      console.log('✅ Model loaded.');
+      await fetchData();
+      const loader = new THREE.GLTFLoader();
+      loader.load(viewer.src, (gltf) => {
+        gltf.scene.traverse((node) => {
+          if (node.isMesh && elementData[node.name]) {
+            const box = new THREE.Box3().setFromObject(node);
+            const center = box.getCenter(new THREE.Vector3());
+            const btn = document.createElement('button');
+            btn.className = 'hotspot-btn';
+            btn.slot = `hotspot-${node.name}`;
+            btn.dataset.position = `${center.x} ${center.y} ${center.z}`;
+            btn.dataset.normal = '0 1 0';
+            btn.textContent = node.name;
+            btn.addEventListener('click', (ev) => {
+              ev.stopPropagation();
+              showInfo(node.name, btn);
+            });
+            viewer.appendChild(btn);
+          }
+        });
+      });
+    });
+  </script>
+</body>
+</html>
