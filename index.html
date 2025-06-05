@@ -186,6 +186,9 @@
       if (!box) {
         box = document.createElement('div');
         box.className = 'infoBox';
+        box.slot = anchor.slot; // attach to the same hotspot position
+        box.dataset.position = anchor.dataset.position;
+        box.dataset.normal = anchor.dataset.normal;
         infoBoxes[name] = box;
         infoContainer.appendChild(box);
         box.style.display = 'none';
@@ -196,14 +199,14 @@
            Protons: ${data.Protons}<br>
            Electrons: ${data.Electrons}</p>
         <button>Close</button>`;
-      box.querySelector('button').onclick = () => box.style.display = 'none';
+      const closeBtn = box.querySelector('button');
+      closeBtn.onclick = (ev) => {
+        ev.stopPropagation();
+        box.style.display = 'none';
+      };
 
-      // position relative to the hotspot element
-      const rect = anchor.getBoundingClientRect();
-      const viewerRect = viewer.getBoundingClientRect();
-      box.style.left = rect.left - viewerRect.left + rect.width + 10 + 'px';
-      box.style.top = rect.top - viewerRect.top + rect.height / 2 + 'px';
-      box.style.transform = 'translate(0, -50%)';
+      // rely on model-viewer to position hotspot elements
+      box.style.transform = 'translate(-50%, -110%)';
       box.style.display = 'block';
     }
 
