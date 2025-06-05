@@ -1,0 +1,595 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Arc Lake</title>
+    <script src="https://unpkg.com/three@0.140.0/build/three.min.js"></script>
+    <script src="https://unpkg.com/three@0.140.0/examples/js/loaders/GLTFLoader.js"></script>
+    <script src="https://unpkg.com/three@0.140.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://unpkg.com/three@0.140.0/examples/js/exporters/GLTFExporter.js"></script>
+    <style>
+        body, html {
+            margin: 0;
+            overflow: hidden;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        #menu {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+            width: 100%;
+            box-sizing: border-box;
+            color: white;
+        }
+        #menu button, #menu input[type="range"] {
+            margin: 0 10px;
+        }
+        #menu button {
+            color: white;
+            font-weight: bold;
+            background-color: deepskyblue;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            padding: 10px;
+        }
+        #menu input[type="range"] {
+            width: 150px;
+        }
+        #canvas-container {
+            position: relative;
+            width: 875px;
+            height: 875px;
+            //margin-top: 50px;
+        }
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+        .infoBox {
+            position: absolute;
+            background: rgba(255, 255, 255, 0.8);
+            padding: 10px;
+            border-radius: 5px;
+            display: none;
+            pointer-events: all;
+            max-width: 300px;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        .infoBox button {
+            color: white;
+            font-size: 16px;
+            font-weight: bold;
+            width: 100px;
+            height: 50px;
+            border: none;
+            background-color: deepskyblue;
+            display: block;
+            margin: 15px auto 0 auto;
+            pointer-events: all;
+        }
+    </style>
+</head>
+<body>
+    <div id="menu">
+        <button id="exportPNGButton">Export to PNG</button>
+        <button id="exportGLBButton">Export to GLB</button>
+        <button id="dismissAllButton">Dismiss All</button>
+        <button id="xrButton">Start AR Experience</button>
+        
+
+    </div>
+    <br>
+    <!--
+            <div>
+          <label>Key Light: <input type="range" id="light1" min="0" max="2" step="0.1" value="1"></label>
+        <label>Fill Light: <input type="range" id="light2" min="0" max="2" step="0.1" value="1"></label>
+        <label>Back Light: <input type="range" id="light3" min="0" max="2" step="0.1" value="1"></label>
+        </div>
+        -->
+    <div id="canvas-container"></div>
+    <div id="xrOverlay"></div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/axios/0.21.1/axios.min.js"></script>
+    <script>
+        let scene, camera, renderer, controls, keyLight, fillLight, backLight, reticle, model, objectAnchored = false;
+        let infoBoxes = {};
+        let elementData = {};
+        let raycaster = new THREE.Raycaster();
+        let mouse = new THREE.Vector2();
+        const canvasContainer = document.getElementById('canvas-container');
+        let selectedObject = null;
+        let startPinchDistance = 0;
+        let initialScale = new THREE.Vector3();
+        let touchStartX = null;
+        let touchStartY = null;
+        let isTranslating = false;
+
+        function fetchData() {
+            const url = 'https://script.google.com/macros/s/AKfycbzM1LHcAy92sihh_B2ROfcKwRV1cv4FmIjI51mbtMoJXzU8vWn0xKhZ7sQu3wth1EdYiw/exec';
+
+            axios.get(url).then(response => {
+                elementData = response.data;
+            }).catch(error => {
+                console.error('Error fetching data:', error);
+            });
+        }
+
+        function init() {
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(45, 1, 0.01, 10000);
+            camera.position.set(40, 30, 40);
+            console.log('Camera initialized at position:', camera.position);
+
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setSize(875, 875);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.shadowMap.enabled = true;
+            renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+            renderer.xr.enabled = true;
+            canvasContainer.appendChild(renderer.domElement);
+
+            const ambientLight = new THREE.AmbientLight(0xffe0b0, 0.5);
+            scene.add(ambientLight);
+
+            keyLight = new THREE.DirectionalLight(0xffeba1, 0.50);
+            keyLight.position.set(-30, 50, 30);
+            keyLight.castShadow = true;
+            scene.add(keyLight);
+            configureShadows(keyLight);
+
+            fillLight = new THREE.DirectionalLight(0xffeba1, 0.65);
+            fillLight.position.set(30, 50, -30);
+            fillLight.castShadow = true;
+            scene.add(fillLight);
+            configureShadows(fillLight);
+
+            backLight = new THREE.DirectionalLight(0xffeba1, 0.35);
+            backLight.position.set(0, 50, -30);
+            backLight.castShadow = true;
+            scene.add(backLight);
+            configureShadows(backLight);
+
+            const loader = new THREE.GLTFLoader();
+            loader.load('https://static.wixstatic.com/3d/2451db_15f85cf329014e5aad78d7fb1b656266.glb', function (gltf) {
+                gltf.scene.traverse(function (node) {
+                    if (node.isMesh) {
+                        node.castShadow = true;
+                        node.receiveShadow = true;
+                        if (elementData[node.name]) {
+                            node.userData = { name: node.name };
+                        }
+                    }
+                    if (node.geometry) {
+                        const currentPosition = node.position.clone();
+                        node.geometry.computeBoundingBox();
+                        const center = new THREE.Vector3();
+                        node.geometry.boundingBox.getCenter(center);
+                        node.geometry.center();
+                        node.position.copy(center).add(currentPosition);
+                    }
+                });
+                scene.add(gltf.scene);
+                model = gltf.scene;
+                animate();
+            }, undefined, function (error) {
+                console.error('Error loading GLB:', error);
+            });
+
+            controls = new THREE.OrbitControls(camera, renderer.domElement);
+            controls.target.set(0, 0, 0);
+            controls.update();
+
+            document.getElementById('exportPNGButton').addEventListener('click', function () {
+                renderer.render(scene, camera);
+                const dataURL = renderer.domElement.toDataURL('image/png');
+                const html = `<html><head><title>Exported PNG</title></head><body><br><br><p style="text-align:center; color: indigo; font-weight: bold;">Right-click or long-press on the image to save it.</p><img src="${dataURL}" style="max-width: 100%; display: block; margin: auto; background: #FFF;"/></body></html>`;
+                const win = window.open();
+                win.document.write(html);
+            });
+
+            document.getElementById('exportGLBButton').addEventListener('click', function () {
+                const exporter = new THREE.GLTFExporter();
+                exporter.parse(scene, function (glb) {
+                    const blob = new Blob([glb], { type: 'model/gltf-binary' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.style.display = 'none';
+                    a.href = url;
+                    a.download = 'Arc Lake.glb';
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                }, { binary: true });
+            });
+
+            document.getElementById('dismissAllButton').addEventListener('click', function () {
+                for (let key in infoBoxes) {
+                    dismissInfo(key);
+                }
+            });
+
+            canvasContainer.addEventListener('click', onDocumentClick, false);
+            canvasContainer.addEventListener('touchstart', onDocumentTouch, false);
+
+            document.getElementById('xrButton').addEventListener('click', onXRButtonClick);
+
+            fetchData();
+        }
+
+        function configureShadows(light) {
+            light.shadow.mapSize.width = 2048;
+            light.shadow.mapSize.height = 2048;
+            light.shadow.camera.near = 0.5;
+            light.shadow.camera.far = 150;
+            light.shadow.camera.left = -50;
+            light.shadow.camera.right = 50;
+            light.shadow.camera.top = 50;
+            light.shadow.camera.bottom = -50;
+            light.shadow.radius = 10;
+        }
+
+        function onDocumentClick(event) {
+            event.preventDefault();
+            const rect = renderer.domElement.getBoundingClientRect();
+            mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+            mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObjects(scene.children, true);
+            if (intersects.length > 0) {
+                const intersectedObject = intersects[0].object;
+                if (intersectedObject.userData.name) {
+                    showInfo(intersectedObject.userData.name, intersects[0].point);
+                }
+            }
+        }
+
+        function onDocumentTouch(event) {
+            if (event.touches.length === 1) {
+                event.preventDefault();
+                const rect = renderer.domElement.getBoundingClientRect();
+                mouse.x = ((event.touches[0].clientX - rect.left) / rect.width) * 2 - 1;
+                mouse.y = -((event.touches[0].clientY - rect.top) / rect.height) * 2 + 1;
+
+                raycaster.setFromCamera(mouse, camera);
+                const intersects = raycaster.intersectObjects(scene.children, true);
+                if (intersects.length > 0) {
+                    const intersectedObject = intersects[0].object;
+                    if (intersectedObject.userData.name) {
+                        showInfo(intersectedObject.userData.name, intersects[0].point);
+                    }
+                }
+            }
+        }
+
+        function showInfo(name, position) {
+            if (infoBoxes[name] && infoBoxes[name].style.display === 'block') {
+                return;
+            }
+
+            const data = elementData[name];
+            const content = data ?
+                `Neutrons: ${data.Neutrons}, Protons: ${data.Protons}, Electrons: ${data.Electrons}, Number of Orbits: ${data["Number of Orbits"]}, Orbits: [K: ${data["Orbit K"]}, L: ${data["Orbit L"]}, M: ${data["Orbit M"]}, N: ${data["Orbit N"]}, O: ${data["Orbit O"]}, P: ${data["Orbit P"]}, Q: ${data["Orbit Q"]}]` :
+                'No data available';
+            let infoBox = infoBoxes[name];
+            if (!infoBox) {
+                infoBox = document.createElement('div');
+                infoBox.className = 'infoBox';
+                infoBox.innerHTML = `
+                    <h2>${name}</h2>
+                    <p>${content}</p>
+                    <button onclick="dismissInfo('${name}')">Close</button>
+                `;
+                document.getElementById('canvas-container').appendChild(infoBox);
+                infoBoxes[name] = infoBox;
+            } else {
+                infoBox.querySelector('p').innerText = content;
+            }
+
+            const vector = new THREE.Vector3(position.x, position.y, position.z);
+            vector.project(camera);
+
+            const rect = renderer.domElement.getBoundingClientRect();
+            const x = (vector.x * 0.5 + 0.5) * rect.width;
+            const y = (vector.y * -0.5 + 0.5) * rect.height;
+
+            infoBox.style.left = `${x}px`;
+            infoBox.style.top = `${y}px`;
+            infoBox.style.display = 'block';
+        }
+
+        window.dismissInfo = function dismissInfo(name) {
+            const infoBox = infoBoxes[name];
+            if (infoBox) {
+                infoBox.style.display = 'none';
+            }
+        };
+
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+            renderer.render(scene, camera);
+        }
+
+        window.addEventListener('resize', () => {
+            const rect = canvasContainer.getBoundingClientRect();
+            camera.aspect = rect.width / rect.height;
+            camera.updateProjectionMatrix();
+            renderer.setSize(rect.width, rect.height);
+        });
+
+        function checkXR() {
+            if (!window.isSecureContext) {
+                console.error('WebXR needs to be served over HTTPS');
+            }
+            if (navigator.xr) {
+                document.getElementById('xrButton').disabled = false;
+            } else {
+                document.getElementById('xrButton').disabled = true;
+                console.error('WebXR is not supported on this device/browser.');
+            }
+        }
+
+        let xrSession = null;
+        let xrRefSpace = null;
+        let xrHitTestSource = null;
+
+        function onXRButtonClick() {
+            if (!xrSession) {
+                navigator.xr
+                    .requestSession('immersive-ar', {
+                        optionalFeatures: ['dom-overlay'],
+                        requiredFeatures: ['local', 'hit-test'],
+                        domOverlay: { root: document.getElementById('xrOverlay') },
+                    })
+                    .then(onSessionStarted, onRequestSessionError);
+            } else {
+                xrSession.end();
+            }
+        }
+
+        function onSessionStarted(session) {
+            xrSession = session;
+            session.addEventListener('end', onSessionEnded);
+
+            let canvas = document.createElement('canvas');
+            let gl = canvas.getContext('webgl', { xrCompatible: true });
+            session.updateRenderState({ baseLayer: new XRWebGLLayer(session, gl) });
+
+            session.requestReferenceSpace('viewer').then(refSpace => {
+                session.requestHitTestSource({ space: refSpace }).then(hitTestSource => {
+                    xrHitTestSource = hitTestSource;
+                });
+            });
+
+            session.requestReferenceSpace('local').then(refSpace => {
+                xrRefSpace = refSpace;
+                session.requestAnimationFrame(onXRFrame);
+            });
+
+            document.getElementById('xrOverlay').addEventListener('click', placeObject);
+
+            initScene(gl, session);
+        }
+
+        function onSessionEnded() {
+            xrSession = null;
+            xrHitTestSource = null;
+            document.getElementById('xrOverlay').removeEventListener('click', placeObject);
+        }
+
+        function onRequestSessionError(error) {
+            console.error('Failed to start WebXR session:', error);
+        }
+
+        function onXRFrame(t, frame) {
+            let session = frame.session;
+            session.requestAnimationFrame(onXRFrame);
+
+            if (xrHitTestSource) {
+                const hitTestResults = frame.getHitTestResults(xrHitTestSource);
+                if (hitTestResults.length) {
+                    const pose = hitTestResults[0].getPose(xrRefSpace);
+                    reticle.matrix.fromArray(pose.transform.matrix);
+                    reticle.visible = true;
+                } else {
+                    reticle.visible = false;
+                }
+            }
+
+            renderer.render(scene, camera);
+        }
+
+        function showOverlayMessage(message) {
+            const overlay = document.createElement('div');
+            overlay.style.position = 'absolute';
+            overlay.style.top = '50%';
+            overlay.style.left = '50%';
+            overlay.style.transform = 'translate(-50%, -50%)';
+            overlay.style.padding = '10px 20px';
+            overlay.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
+            overlay.style.color = '#fff';
+            overlay.style.fontSize = '20px';
+            overlay.style.zIndex = '1000';
+            overlay.innerText = message;
+            document.body.appendChild(overlay);
+            
+            setTimeout(() => {
+                document.body.removeChild(overlay);
+            }, 3000);
+        }
+
+        function placeObject() {
+            showOverlayMessage("Wait for tracking success indicator");
+
+            if (reticle.visible && model && !objectAnchored) {
+                model.position.setFromMatrixPosition(reticle.matrix);
+                model.scale.set(1.8, 1.8, 1.8);
+                model.position.set(0, -10, -30); // Set the initial position here
+                scene.add(model);
+                objectAnchored = true;
+                reticle.visible = false;
+                showOverlayMessage("Tracking success! Object placed.");
+                scene.remove(reticle); // Remove reticle from the scene
+
+                // Enable object manipulation
+                enableObjectManipulation();
+            }
+        }
+
+        function enableObjectManipulation() {
+            selectedObject = model;
+            initialScale.copy(model.scale);
+
+            // Add touch event listeners
+            window.addEventListener('touchstart', onTouchStart, false);
+            window.addEventListener('touchmove', onTouchMove, false);
+            window.addEventListener('touchend', onTouchEnd, false);
+        }
+
+        function onTouchStart(event) {
+            if (event.touches.length === 2) {
+                startPinchDistance = getPinchDistance(event.touches);
+                initialScale.copy(selectedObject.scale);
+                touchStartX = (event.touches[0].clientX + event.touches[1].clientX) / 2;
+                touchStartY = (event.touches[0].clientY + event.touches[1].clientY) / 2;
+                isTranslating = true;
+            } else if (event.touches.length === 1) {
+                const touch = event.touches[0];
+                touchStartX = touch.clientX;
+                touchStartY = touch.clientY;
+            }
+        }
+        function onTouchMove(event) {
+            if (event.touches.length === 2) {
+                const currentPinchDistance = getPinchDistance(event.touches);
+                const scaleFactor = currentPinchDistance / startPinchDistance;
+                selectedObject.scale.set(
+                    initialScale.x * scaleFactor,
+                    initialScale.y * scaleFactor,
+                    initialScale.z * scaleFactor
+                );
+
+                const touchX = (event.touches[0].clientX + event.touches[1].clientX) / 2;
+                const touchY = (event.touches[0].clientY + event.touches[1].clientY) / 2;
+                const deltaX = touchX - touchStartX;
+                const deltaY = touchY - touchStartY;
+
+                selectedObject.position.x += deltaX * 0.01;
+                selectedObject.position.y -= deltaY * 0.01;
+
+                touchStartX = touchX;
+                touchStartY = touchY;
+            } else if (event.touches.length === 1) {
+                const touch = event.touches[0];
+                const deltaX = touch.clientX - touchStartX;
+                selectedObject.rotation.y += deltaX * 0.01;
+
+                touchStartX = touch.clientX;
+                touchStartY = touch.clientY;
+            }
+        }
+
+        function onTouchEnd(event) {
+            if (event.touches.length < 2) {
+                startPinchDistance = 0;
+                touchStartX = null;
+                touchStartY = null;
+                isTranslating = false;
+            }
+        }
+
+        function getPinchDistance(touches) {
+            const dx = touches[0].clientX - touches[1].clientX;
+            const dy = touches[0].clientY - touches[1].clientY;
+            return Math.sqrt(dx * dx + dy * dy);
+        }
+
+        function initScene(gl, session) {
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.001, 100000);
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, context: gl });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.xr.enabled = true;
+            renderer.xr.setReferenceSpaceType('local');
+            renderer.xr.setSession(session);
+
+            const ambientLight = new THREE.AmbientLight(0xffe0b0, 0.5);
+            scene.add(ambientLight);
+
+            const spotLight = new THREE.SpotLight(0xDDDDDD, 0.7);
+            spotLight.position.set(1, 1, -9);
+            scene.add(spotLight);
+
+            const loader = new THREE.GLTFLoader();
+            loader.load('https://static.wixstatic.com/3d/2451db_15f85cf329014e5aad78d7fb1b656266.glb', function (gltf) {
+                model = gltf.scene;
+                reticle.visible = true;  // Show reticle when the model is loaded
+                showOverlayMessage("Model loaded, reticle visible");
+                addThreePointLighting();
+            }, undefined, function (error) {
+                console.error('Error loading GLB:', error);
+            });
+
+            reticle = new THREE.Mesh(
+                new THREE.RingBufferGeometry(0.12, 0.15, 20).rotateX(-Math.PI / 2),
+                new THREE.MeshPhongMaterial({ color: 0x0fff00 })
+            );
+            reticle.matrixAutoUpdate = false;
+            reticle.visible = false;
+            scene.add(reticle);
+
+            // Add event listener for user tap to place the object
+            window.addEventListener('click', onUserTap);
+        }
+
+        function addThreePointLighting() {
+            // Key light
+            const keyLight = new THREE.DirectionalLight(0xffffff, 1.0);
+            keyLight.position.set(10, 10, 10);
+            scene.add(keyLight);
+
+            // Fill light
+            const fillLight = new THREE.DirectionalLight(0xffffff, 0.5);
+            fillLight.position.set(-10, 10, 10);
+            scene.add(fillLight);
+
+            // Back light
+            const backLight = new THREE.DirectionalLight(0xffffff, 0.5);
+            backLight.position.set(0, 10, -10);
+            scene.add(backLight);
+        }
+
+        // Additional code to handle the WebXR rendering and session setup
+        function animate() {
+            renderer.setAnimationLoop(render);
+        }
+
+        function render() {
+            if (reticle && !objectAnchored) {
+                // Update reticle visibility based on tracking
+                const hits = renderer.xr.getHitTestResults();
+                if (hits.length > 0) {
+                    const hit = hits[0];
+                    reticle.matrix.fromArray(hit.getPose(referenceSpace).transform.matrix);
+                    reticle.visible = true;
+                } else {
+                    reticle.visible = false;
+                }
+            }
+            renderer.render(scene, camera);
+        }
+
+        checkXR();
+        init();
+    </script>
+</body>
+</html>
