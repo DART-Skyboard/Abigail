@@ -41,13 +41,48 @@
       opacity: 0.5;
       cursor: default;
     }
+
+    .infoBox {
+      position: absolute;
+      background: rgba(255, 255, 255, 0.9);
+      padding: 8px;
+      border-radius: 4px;
+      pointer-events: all;
+      max-width: 220px;
+    }
+    .infoBox button {
+      margin-top: 8px;
+      width: 100%;
+      padding: 4px 8px;
+      font-weight: bold;
+      background: deepskyblue;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+
+    .hotspot-btn {
+      pointer-events: all;
+      padding: 4px 6px;
+      background: deepskyblue;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      font-size: 12px;
+      cursor: pointer;
+    }
   </style>
   <script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>
+  <script src="https://unpkg.com/three@0.140.0/build/three.min.js"></script>
+  <script src="https://unpkg.com/three@0.140.0/examples/js/loaders/GLTFLoader.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/axios/0.21.1/axios.min.js"></script>
 </head>
 <body>
   <div id="toolbar">
     <button id="exportPNG">Export PNG</button>
     <button id="exportGLB">Export GLB</button>
+    <button id="dismissAll">Dismiss All</button>
     <button id="startAR">Start AR: See Button Bottom Right</button>
     <button id="exitAR" style="display:none;">Exit AR</button>
   </div>
@@ -64,6 +99,7 @@
     ar-modes="webxr scene-viewer quick-look"
     interaction-prompt="auto">
   </model-viewer>
+  <div id="infoContainer"></div>
 
   <script>
     const viewer   = document.getElementById('viewer');
@@ -124,8 +160,78 @@
       }
     });
 
-    viewer.addEventListener('load', () => {
+    const btnDismiss = document.getElementById('dismissAll');
+    const infoContainer = document.getElementById('infoContainer');
+    const infoBoxes = {};
+    let elementData = {};
+
+    async function fetchData() {
+      try {
+        const res = await axios.get('https://script.google.com/macros/s/AKfycbzM1LHcAy92sihh_B2ROfcKwRV1cv4FmIjI51mbtMoJXzU8vWn0xKhZ7sQu3wth1EdYiw/exec');
+        elementData = res.data;
+      } catch (err) {
+        console.error('Error fetching data', err);
+      }
+    }
+
+    function showInfo(name, x, y) {
+      const data = elementData[name];
+      if (!data) return;
+
+      let box = infoBoxes[name];
+      if (!box) {
+        box = document.createElement('div');
+        box.className = 'infoBox';
+        infoBoxes[name] = box;
+        infoContainer.appendChild(box);
+      }
+      box.style.display = 'block';
+      box.style.left = x + 'px';
+      box.style.top = y + 'px';
+      box.innerHTML = `<h3>${name}</h3>
+        <p>Neutrons: ${data.Neutrons}<br>
+           Protons: ${data.Protons}<br>
+           Electrons: ${data.Electrons}</p>
+        <button>Close</button>`;
+      box.querySelector('button').onclick = () => box.style.display = 'none';
+    }
+
+    function dismissAll() {
+      infoContainer.innerHTML = '';
+      for (const key in infoBoxes) delete infoBoxes[key];
+    }
+
+    btnDismiss.addEventListener('click', dismissAll);
+
+    viewer.addEventListener('click', (e) => {
+      if (e.target.classList.contains('hotspot-btn')) return;
+      dismissAll();
+    });
+
+    viewer.addEventListener('load', async () => {
       console.log('✅ Model loaded.');
+      await fetchData();
+      const loader = new THREE.GLTFLoader();
+      loader.load(viewer.src, (gltf) => {
+        gltf.scene.traverse((node) => {
+          if (node.isMesh && elementData[node.name]) {
+            const box = new THREE.Box3().setFromObject(node);
+            const center = box.getCenter(new THREE.Vector3());
+            const btn = document.createElement('button');
+            btn.className = 'hotspot-btn';
+            btn.slot = `hotspot-${node.name}`;
+            btn.dataset.position = `${center.x} ${center.y} ${center.z}`;
+            btn.dataset.normal = '0 1 0';
+            btn.textContent = node.name;
+            btn.addEventListener('click', (ev) => {
+              ev.stopPropagation();
+              const rect = viewer.getBoundingClientRect();
+              showInfo(node.name, ev.clientX - rect.left, ev.clientY - rect.top);
+            });
+            viewer.appendChild(btn);
+          }
+        });
+      });
     });
   </script>
 </body>
