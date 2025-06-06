@@ -41,13 +41,40 @@
       opacity: 0.5;
       cursor: default;
     }
+
+    .infoBox {
+      position: absolute;
+      background: rgba(255, 255, 255, 0.9);
+      padding: 8px;
+      border-radius: 4px;
+      pointer-events: all;
+      max-width: 220px;
+      transform: translate(-50%, -110%);
+      display: none;
+    }
+    .infoBox button {
+      margin-top: 8px;
+      width: 100%;
+      padding: 4px 8px;
+      font-weight: bold;
+      background: deepskyblue;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+
   </style>
   <script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>
+  <script src="https://unpkg.com/three@0.140.0/build/three.min.js"></script>
+  <script src="https://unpkg.com/three@0.140.0/examples/js/loaders/GLTFLoader.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/axios/0.21.1/axios.min.js"></script>
 </head>
 <body>
   <div id="toolbar">
     <button id="exportPNG">Export PNG</button>
     <button id="exportGLB">Export GLB</button>
+    <button id="dismissAll">Dismiss All</button>
     <button id="startAR">Start AR: See Button Bottom Right</button>
     <button id="exitAR" style="display:none;">Exit AR</button>
   </div>
@@ -59,11 +86,15 @@
     camera-controls
     exposure="1"
     environment-image="neutral"
+    tone-mapping="aces"
     shadow-intensity="1"
     ar
     ar-modes="webxr scene-viewer quick-look"
     interaction-prompt="auto">
+    <div id="infoContainer"></div>
   </model-viewer>
+  <!-- reference image for layout -->
+  <img src="https://photos.app.goo.gl/eiH11g4kVuGcQRNF6" alt="reference" style="display:none">
 
   <script>
     const viewer   = document.getElementById('viewer');
@@ -124,8 +155,97 @@
       }
     });
 
-    viewer.addEventListener('load', () => {
+    const btnDismiss = document.getElementById('dismissAll');
+    const infoContainer = document.getElementById('infoContainer'); // container for hotspots
+    const infoBoxes = {};
+    let elementData = {};
+    const meshInfo = [];
+
+    async function fetchData() {
+      try {
+        const res = await axios.get('https://script.google.com/macros/s/AKfycbzM1LHcAy92sihh_B2ROfcKwRV1cv4FmIjI51mbtMoJXzU8vWn0xKhZ7sQu3wth1EdYiw/exec');
+        elementData = res.data;
+      } catch (err) {
+        console.error('Error fetching data', err);
+      }
+    }
+
+    function showInfo(name, pos, normal) {
+      const data = elementData[name];
+      if (!data) return;
+
+      let box = infoBoxes[name];
+      if (!box) {
+        box = document.createElement('div');
+        box.className = 'infoBox';
+        box.slot = `hotspot-${name}`;
+        infoBoxes[name] = box;
+        infoContainer.appendChild(box);
+        box.style.display = 'none';
+      }
+
+      if (box.style.display === 'block') {
+        box.style.display = 'none';
+        return;
+      }
+
+      box.innerHTML = `<h3>${name}</h3>
+        <p>Neutrons: ${data.Neutrons}<br>
+           Protons: ${data.Protons}<br>
+           Electrons: ${data.Electrons}</p>
+        <button>Close</button>`;
+      box.querySelector('button').onclick = () => box.style.display = 'none';
+
+      box.dataset.position = `${pos.x} ${pos.y} ${pos.z}`;
+      box.dataset.normal = `${normal.x} ${normal.y} ${normal.z}`;
+      box.style.display = 'block';
+    }
+
+    function dismissAll() {
+      for (const key in infoBoxes) {
+        const box = infoBoxes[key];
+        if (box && box.parentElement) {
+          box.parentElement.removeChild(box);
+        }
+        delete infoBoxes[key];
+      }
+      infoContainer.innerHTML = '';
+    }
+
+    btnDismiss.addEventListener('click', dismissAll);
+
+    viewer.addEventListener('click', (e) => {
+      const rect = viewer.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      const hit = viewer.positionAndNormalFromPoint(x, y);
+      if (!hit) return;
+
+      const point = new THREE.Vector3(hit.position.x, hit.position.y, hit.position.z);
+      let target = null;
+      for (const info of meshInfo) {
+        if (info.box.containsPoint(point)) {
+          target = info;
+          break;
+        }
+      }
+      if (target) {
+        showInfo(target.name, hit.position, hit.normal);
+      }
+    });
+
+    viewer.addEventListener('load', async () => {
       console.log('✅ Model loaded.');
+      await fetchData();
+      const loader = new THREE.GLTFLoader();
+      loader.load(viewer.src, (gltf) => {
+        gltf.scene.traverse((node) => {
+          if (node.isMesh && elementData[node.name]) {
+            const box = new THREE.Box3().setFromObject(node);
+            meshInfo.push({name: node.name, box});
+          }
+        });
+      });
     });
   </script>
 </body>
